@@ -2,6 +2,53 @@
 #include <stdlib.h>
 #include <inttypes.h>
 #include "sim.h"
+#include <string>
+
+// Cache Constructor
+Cache::Cache(uint32_t blocksize, uint32_t size, uint32_t assoc)
+    : BLOCKSIZE(blocksize), SIZE(size), ASSOC(assoc) {}
+
+// Method to calculate number of blocks, sets, and index bits
+void Cache::GetNoOfBlocksSetsIndexBits()
+{
+   NumberOfBlocks = SIZE / BLOCKSIZE;
+   NumberOfSets = NumberOfBlocks / ASSOC;
+
+   if (NumberOfSets > 0)
+   {
+      NumberOfIndexBits = (uint32_t)log2(NumberOfSets);
+   }
+   else
+   {
+      NumberOfIndexBits = 0;
+   }
+
+   printf("NoOfBLOCKS: %u\n", NumberOfBlocks);
+   printf("NoOfSets: %u\n", NumberOfSets);
+   printf("NoOfIndexBits: %u\n", NumberOfIndexBits);
+}
+
+// Method to display cache configuration
+void Cache::displayConfig()
+{
+   printf("Cache Configuration:\n");
+   printf("BLOCKSIZE: %u\n", BLOCKSIZE);
+   printf("SIZE:   %u\n", SIZE);
+   printf("ASSOC:  %u\n", ASSOC);
+}
+
+// Method to extract address fields (tag, index, block offset)
+void ExtractAddressFields(uint32_t addr, uint32_t BlockSize, uint32_t IndexBits, uint32_t &blockOffset, uint32_t &index, uint32_t &tag)
+{
+   int BlockOffsetBits = log2(BlockSize);
+
+   uint32_t blockOffsetMask = (1 << BlockOffsetBits) - 1;
+   uint32_t indexMask = (1 << IndexBits) - 1;
+
+   blockOffset = addr & blockOffsetMask;
+   index = (addr >> BlockOffsetBits) & indexMask;
+   tag = addr >> (BlockOffsetBits + IndexBits);
+}
 
 /*  "argc" holds the number of command-line arguments.
     "argv[]" holds the arguments themselves.
@@ -61,6 +108,14 @@ int main(int argc, char *argv[])
    printf("trace_file: %s\n", trace_file);
    printf("\n");
 
+   Cache L1(params.BLOCKSIZE, params.L1_SIZE, params.L1_ASSOC);
+   L1.displayConfig();
+   L1.GetNoOfBlocksSetsIndexBits();
+
+   Cache L2(params.BLOCKSIZE, params.L2_SIZE, params.L2_ASSOC);
+   L2.displayConfig();
+   L2.GetNoOfBlocksSetsIndexBits();
+   uint32_t blockOffset, index, tag;
    // Read requests from the trace file and echo them back.
    while (fscanf(fp, "%c %x\n", &rw, &addr) == 2)
    { // Stay in the loop if fscanf() successfully parsed two tokens as specified.
@@ -73,6 +128,12 @@ int main(int argc, char *argv[])
          printf("Error: Unknown request type %c.\n", rw);
          exit(EXIT_FAILURE);
       }
+      ExtractAddressFields(addr, L1.BLOCKSIZE, L1.NumberOfIndexBits, blockOffset, index, tag);
+      printf("Addresses: %x\n", addr);
+      printf("Block Offset: %u\n", blockOffset);
+      printf("Index: %x\n", index);
+      printf("Tag: %x\n", tag);
+      break;
 
       ///////////////////////////////////////////////////////
       // Issue the request to the L1 cache instance here.
