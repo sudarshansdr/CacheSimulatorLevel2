@@ -21,6 +21,8 @@ typedef struct
    uint32_t PREF_M;
 } cache_params_t;
 
+uint32_t MainMemTraffic = 0;
+
 // Put additional data structures here as per your requirement.
 // Cache Element class definition
 class ItemsInCache
@@ -70,6 +72,7 @@ public:
    uint32_t ReadMisses = 0;
    uint32_t Writes = 0;
    uint32_t WriteMisses = 0;
+   uint32_t WriteBacks = 0;
 
    std::vector<std::vector<ItemsInCache>> cache; // 2D dynamic array for cache elements
 
@@ -91,12 +94,13 @@ public:
    void ExtractAddressFields(uint32_t addr, uint32_t BlockSize, uint32_t IndexBits, uint32_t &blockOffset, uint32_t &index, uint32_t &tag);
 
    bool searchInCache(uint32_t index, uint32_t tag, ItemsInCache &cacheLine, uint32_t &assocIndex);
-   bool ReadFunction(uint32_t addr, uint32_t &blockOffset, uint32_t &index, uint32_t &tag, Cache *NextCacheLevel);
+   bool ReadFunction(uint32_t addr, uint32_t &blockOffset, uint32_t &index, uint32_t &tag, Cache *NextCacheLevel, bool FromUpdate);
    bool writeFunction(uint32_t addr, uint32_t &blockOffset, uint32_t &index, uint32_t &tag, Cache *NextCacheLevel);
-   void updateCache(uint32_t index, uint32_t tag);
+   void updateCache(uint32_t addr, Cache *NextCacheLevel, bool FromRead);
    void updateLRUCounters(uint32_t setIndex, uint32_t assocIndex);
    uint32_t getLRUIndex(uint32_t index);
    void writeCache(uint32_t index, uint32_t tag);
+   void updateCacheNextLevel(uint32_t addr, Cache *NextCacheLevel);
 };
 
 #endif
