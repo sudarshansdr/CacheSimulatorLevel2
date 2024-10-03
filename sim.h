@@ -22,6 +22,7 @@ typedef struct
 } cache_params_t;
 
 uint32_t MainMemTraffic = 0;
+uint32_t Count = 0;
 
 // Put additional data structures here as per your requirement.
 // Cache Element class definition
@@ -96,7 +97,7 @@ public:
    bool searchInCache(uint32_t index, uint32_t tag, ItemsInCache &cacheLine, uint32_t &assocIndex);
    bool ReadFunction(uint32_t addr, uint32_t &blockOffset, uint32_t &index, uint32_t &tag, Cache *NextCacheLevel, bool FromUpdate);
    bool writeFunction(uint32_t addr, uint32_t &blockOffset, uint32_t &index, uint32_t &tag, Cache *NextCacheLevel);
-   void updateCache(uint32_t addr, Cache *NextCacheLevel, bool FromRead);
+   void updateCache(uint32_t addr, Cache *NextCacheLevel, bool FromRead, bool);
    void updateLRUCounters(uint32_t setIndex, uint32_t assocIndex);
    uint32_t getLRUIndex(uint32_t index);
    void writeCache(uint32_t index, uint32_t tag);
