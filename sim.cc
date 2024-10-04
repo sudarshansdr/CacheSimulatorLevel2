@@ -432,7 +432,7 @@ bool Cache::writeFunction(uint32_t addr, uint32_t &blockOffset, uint32_t &index,
       }
       else
       {
-         MainMemTraffic++;
+         // MainMemTraffic++;
       }
 
       // Now update the current cache with the new block and set the dirty bit
