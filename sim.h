@@ -56,6 +56,7 @@ public:
 
    // Method to display for debugging
    void display() const;
+   std::string getFormattedItem() const;
 };
 
 // Cache Class Declaration
@@ -74,6 +75,7 @@ public:
    uint32_t Writes = 0;
    uint32_t WriteMisses = 0;
    uint32_t WriteBacks = 0;
+   uint32_t counter;
 
    std::vector<std::vector<ItemsInCache>> cache; // 2D dynamic array for cache elements
 
@@ -90,6 +92,7 @@ public:
    // Method to display the cache configuration
    void displayConfig();
    void displayCache();
+   bool compareByCounter(const ItemsInCache &a, const ItemsInCache &b);
 
    // Method to extract tag, index, and block offset from address
    void ExtractAddressFields(uint32_t addr, uint32_t BlockSize, uint32_t IndexBits, uint32_t &blockOffset, uint32_t &index, uint32_t &tag);

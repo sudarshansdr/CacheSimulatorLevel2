@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include <cstdio>
+#include <algorithm> // For std::sort
 
 // ItemsInCache Constructor
 ItemsInCache::ItemsInCache(uint32_t t, uint32_t i, bool v, bool d, uint32_t c)
@@ -34,6 +35,15 @@ void ItemsInCache::display() const
 ItemsInCache &Cache::getItemsInCache(uint32_t setIndex, uint32_t assocIndex)
 {
    return cache[setIndex][assocIndex];
+}
+
+// New method to return a formatted string
+std::string ItemsInCache::getFormattedItem() const
+{
+   char buffer[20];
+   // Format the tag as hex and append " D" if dirty, otherwise "  " (2 spaces for alignment)
+   snprintf(buffer, sizeof(buffer), " %8x%s", tag, dirty ? " D" : "  ");
+   return std::string(buffer);
 }
 
 Cache::Cache(uint32_t blocksize, uint32_t size, uint32_t assoc)
@@ -77,6 +87,33 @@ void Cache::displayConfig()
 
 void Cache::displayCache()
 {
+
+   // Loop through each set in the cache
+   for (uint32_t setIndex = 0; setIndex < NumberOfSets; ++setIndex)
+   {
+      printf("set %6d: ", setIndex); // Print set number, formatted
+
+      // Sort cache items based on the 'counter' value before printing
+      std::vector<ItemsInCache> sortedItems = cache[setIndex];
+      std::sort(sortedItems.begin(), sortedItems.end(),
+                [](const ItemsInCache &a, const ItemsInCache &b)
+                {
+                   return a.getCounter() < b.getCounter();
+                });
+
+      // Print each item in the set, after sorting by counter
+      for (uint32_t assocIndex = 0; assocIndex < ASSOC; ++assocIndex)
+      {
+         // Use the getFormattedItem() function to print the tag and dirty flag
+         std::string formattedItem = sortedItems[assocIndex].getFormattedItem();
+         printf("%s", formattedItem.c_str());
+      }
+      printf("\n"); // New line after printing each set
+   }
+}
+
+/*void Cache::displayCache()
+{
    for (uint32_t setIndex = 0; setIndex < NumberOfSets; ++setIndex)
    {
       for (uint32_t assocIndex = 0; assocIndex < ASSOC; ++assocIndex)
@@ -84,7 +121,7 @@ void Cache::displayCache()
          cache[setIndex][assocIndex].display();
       }
    }
-}
+}*/
 
 void Cache::ExtractAddressFields(uint32_t addr, uint32_t BlockSize, uint32_t IndexBits, uint32_t &blockOffset, uint32_t &index, uint32_t &tag)
 {
@@ -370,14 +407,14 @@ int main(int argc, char *argv[])
 
    // Create L1 cache
    Cache L1(params.BLOCKSIZE, params.L1_SIZE, params.L1_ASSOC);
-   L1.displayConfig();
+   // L1.displayConfig();
    L1.GetNoOfBlocksSetsIndexBits();
 
    // Conditionally create L2 cache if size and associativity are greater than 0
    if (params.L2_SIZE > 0 && params.L2_ASSOC > 0)
    {
       L2 = new Cache(params.BLOCKSIZE, params.L2_SIZE, params.L2_ASSOC); // Dynamically allocate L2 cache
-      L2->displayConfig();
+      // L2->displayConfig();
       L2->GetNoOfBlocksSetsIndexBits();
 
       // L1 points to L2 as its next level
@@ -416,28 +453,54 @@ int main(int argc, char *argv[])
          L1.writeFunction(addr, blockOffset, index, tag, L1.NextCacheLevel);
       }
    }
-
+   printf("===== L1 contents =====\n");
    L1.displayCache(); // Display L1 cache after update
-   printf("Number of reads %d\n", L1.Reads);
-   printf("Number of readmisses %d\n", L1.ReadMisses);
-   printf("Number of writes %d\n", L1.Writes);
-   printf("Number of writemisses %d\n", L1.WriteMisses);
-   printf("Number of Writebacks %d\n", L1.WriteBacks);
-   printf("L1 MissRate %.4f\n", (float)(L1.ReadMisses + L1.WriteMisses) / (L1.Reads + L1.Writes));
+   printf("\n");
 
    if (L2)
    {
+      printf("===== L2 contents =====\n");
       L2->displayCache();
-      printf("Number of 2 reads %d\n", L2->Reads);
-      printf("Number of 2 readmisses %d\n", L2->ReadMisses);
-      printf("Number of 2 writes %d\n", L2->Writes);
-      printf("Number of 2 writemisses %d\n", L2->WriteMisses);
-      printf("Number of Writebacks %d\n", L2->WriteBacks);
-      printf("L2 MissRate %.4f\n", (float)(L2->ReadMisses) / (L2->Reads));
+      printf("\n");
 
       delete L2; // Clean up dynamically allocated L2 cache
    }
-   printf("Main Memory Traffic is %d\n", MainMemTraffic);
+
+   printf("===== Measurements =====\n");
+   printf("a. L1 reads:                   %d\n", L1.Reads);
+   printf("b. L1 read misses:             %d\n", L1.ReadMisses);
+   printf("c. L1 writes:                  %d\n", L1.Writes);
+   printf("d. L1 write misses:            %d\n", L1.WriteMisses);
+   printf("e. L1 miss rate:               %.4f\n", (float)(L1.ReadMisses + L1.WriteMisses) / (L1.Reads + L1.Writes));
+   printf("f. L1 writebacks:              %d\n", L1.WriteBacks);
+   printf("g. L1 prefetches:              0\n");
+   if (L2)
+   {
+      printf("h. L2 reads (demand):          %d\n", L2->Reads);
+      printf("i. L2 read misses (demand):    %d\n", L2->ReadMisses);
+      printf("j. L2 reads (prefetch):        0\n");
+      printf("k. L2 read misses (prefetch):  0\n");
+      printf("l. L2 writes:                  %d\n", L2->Writes);
+      printf("m. L2 write misses:            %d\n", L2->WriteMisses);
+      printf("n. L2 miss rate:               %.4f\n", (float)(L2->ReadMisses) / (L2->Reads));
+      printf("o. L2 writebacks:              %d\n", L2->WriteBacks);
+      printf("p. L2 prefetches:              0\n");
+   }
+   else
+   {
+      printf("h. L2 reads (demand):          0\n");
+      printf("i. L2 read misses (demand):    0\n");
+      printf("j. L2 reads (prefetch):        0\n");
+      printf("k. L2 read misses (prefetch):  0\n");
+      printf("l. L2 writes:                  0\n");
+      printf("m. L2 write misses:            0\n");
+      printf("n. L2 miss rate:               0.0000\n");
+      printf("o. L2 writebacks:              0\n");
+      printf("p. L2 prefetches:              0\n");
+   }
+   printf("q. memory traffic:             %d\n", MainMemTraffic);
+
    fclose(fp); // Close the trace file
+
    return 0;
 }
