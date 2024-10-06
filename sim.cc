@@ -36,17 +36,11 @@ ItemsInCache &Cache::getItemsInCache(uint32_t setIndex, uint32_t assocIndex)
    return cache[setIndex][assocIndex];
 }
 
-// Cache Constructor
 Cache::Cache(uint32_t blocksize, uint32_t size, uint32_t assoc)
     : BLOCKSIZE(blocksize), SIZE(size), ASSOC(assoc), NextCacheLevel(nullptr)
 {
    GetNoOfBlocksSetsIndexBits();
    cache.resize(NumberOfSets, std::vector<ItemsInCache>(ASSOC));
-   printf("For cache Number of sets = %d\n", NumberOfSets);
-   printf("for cache Assoc = %d", ASSOC);
-
-   // Initialize counter value with Assoc
-   printf("-------------assoc index--------- %d", ASSOC);
    for (uint32_t setIndex = 0; setIndex < NumberOfSets; ++setIndex)
    {
       for (uint32_t assocIndex = 0; assocIndex < ASSOC; ++assocIndex)
@@ -56,7 +50,7 @@ Cache::Cache(uint32_t blocksize, uint32_t size, uint32_t assoc)
    }
 }
 
-// Method to calculate number of blocks, sets, and index bits
+// This method calculates the number of blocks, sets, and index bits
 void Cache::GetNoOfBlocksSetsIndexBits()
 {
    NumberOfBlocks = SIZE / BLOCKSIZE;
@@ -70,13 +64,9 @@ void Cache::GetNoOfBlocksSetsIndexBits()
    {
       NumberOfIndexBits = 0;
    }
-
-   printf("NoOfBLOCKS: %u\n", NumberOfBlocks);
-   printf("NoOfSets: %u\n", NumberOfSets);
-   printf("NoOfIndexBits: %u\n", NumberOfIndexBits);
 }
 
-// Method to display cache configuration
+// This method displays the cache configuration
 void Cache::displayConfig()
 {
    printf("Cache Configuration:\n");
@@ -85,20 +75,17 @@ void Cache::displayConfig()
    printf("ASSOC:  %u\n", ASSOC);
 }
 
-// Method to display cache content
 void Cache::displayCache()
 {
    for (uint32_t setIndex = 0; setIndex < NumberOfSets; ++setIndex)
    {
       for (uint32_t assocIndex = 0; assocIndex < ASSOC; ++assocIndex)
       {
-         // printf("Set %u, Way %u: ", setIndex, assocIndex);
          cache[setIndex][assocIndex].display();
       }
    }
 }
 
-// Method to extract address fields (tag, index, block offset)
 void Cache::ExtractAddressFields(uint32_t addr, uint32_t BlockSize, uint32_t IndexBits, uint32_t &blockOffset, uint32_t &index, uint32_t &tag)
 {
    int BlockOffsetBits = log2(BlockSize);
@@ -109,86 +96,58 @@ void Cache::ExtractAddressFields(uint32_t addr, uint32_t BlockSize, uint32_t Ind
    blockOffset = addr & blockOffsetMask;
    index = (addr >> BlockOffsetBits) & indexMask;
    tag = addr >> (BlockOffsetBits + IndexBits);
-   // printf("tag bit value = %x", tag);
 }
 
-bool Cache::searchInCache(uint32_t index, uint32_t tag, ItemsInCache &cacheLine, uint32_t &assocIndex)
+bool Cache::searchInCache(uint32_t index, uint32_t tag, ItemsInCache &CacheSet, uint32_t &assocIndex)
 {
    for (uint32_t i = 0; i < ASSOC; ++i)
    {
       ItemsInCache &line = cache[index][i];
       if (line.isValid() && line.getTag() == tag)
       {
-         cacheLine = line;
-         assocIndex = i; // Correctly set the assocIndex to the hit line
-         return true;    // Cache hit
+         CacheSet = line;
+         assocIndex = i;
+         return true;
       }
    }
-   return false; // Cache miss
+   return false;
 }
 
 bool Cache::ReadFunction(uint32_t addr, uint32_t &blockOffset, uint32_t &index, uint32_t &tag, Cache *NextCacheLevel, bool FromUpdate)
 {
-   // Extract address fields for the current cache level
    ExtractAddressFields(addr, BLOCKSIZE, NumberOfIndexBits, blockOffset, index, tag);
-
-   // Search in the current cache level
-   ItemsInCache cacheLine;
+   ItemsInCache CacheSet;
    uint32_t assocIndex = 0;
 
-   // Increment read count for the current cache level
-   if (!FromUpdate)
+   if (FromUpdate)
    {
       this->Reads++;
    }
 
-   if (searchInCache(index, tag, cacheLine, assocIndex))
+   if (searchInCache(index, tag, CacheSet, assocIndex))
    {
-      // Cache hit
-      // printf("Cache hit at current cache level for address %x\n", addr);
-      updateLRUCounters(index, assocIndex); // LRU update on cache hit
-      return true;                          // Cache hit
+      updateLRUCounters(index, assocIndex);
+      return true;
    }
    else
    {
-      // Cache miss at the current level
-      // printf("Cache miss at address %x in current cache level.\n", addr);
+      this->ReadMisses++;
+      uint32_t lruIndex = getLRUIndex(index);
+      ItemsInCache &TargetCacheSet = cache[index][lruIndex];
 
-      this->ReadMisses++; // Increment read miss counter
-
-      // this->WriteMisses++;
-
-      // If there's a dirty block in the current cache level, evict it
-      uint32_t lruIndex = getLRUIndex(index);               // Find the LRU block for eviction
-      ItemsInCache &lineToReplace = cache[index][lruIndex]; // Get the line to replace
-
-      if (lineToReplace.isDirty())
+      if (TargetCacheSet.isDirty())
       {
-         // Write back the dirty block to the next cache level or memory
-         // this->WriteBacks++;
-         uint32_t writeBackTag = lineToReplace.getTag();
-         // printf("Writing back dirty data for eviction at index %d and tag %d\n", index, writeBackTag);
-
-         // Write back to the next cache level if it exists
+         uint32_t writeBackTag = TargetCacheSet.getTag();
          if (NextCacheLevel != nullptr)
          {
             uint32_t NumberOfBlockOffset = log2(BLOCKSIZE);
-            // Recalculate the full address for the write-back block using its tag, index, and block offset
             uint32_t writeBackAddr = (writeBackTag << (NumberOfIndexBits + NumberOfBlockOffset)) | (index << NumberOfBlockOffset) | blockOffset;
-            // printf("Writing back to next level with address %x\n", writeBackAddr);
-            NextCacheLevel->updateCache(writeBackAddr, NextCacheLevel->NextCacheLevel, false, false); // Write back dirty block
+            NextCacheLevel->updateCache(writeBackAddr, NextCacheLevel->NextCacheLevel, false, false);
          }
          else
          {
-
-            // this->WriteBacks++;
-
-            //  Write back to memory if there's no next cache level
-            // printf("Writing dirty data back to main memory\n");
          }
       }
-
-      // After eviction (if necessary), attempt to read from the next cache level
       if (NextCacheLevel != nullptr)
       {
          uint32_t nextBlockOffset, nextIndex, nextTag;
@@ -196,30 +155,20 @@ bool Cache::ReadFunction(uint32_t addr, uint32_t &blockOffset, uint32_t &index, 
 
          if (foundInNextLevel)
          {
-            // Data found in the next level cache
-            // printf("Data found in next level cache for address %x\n", addr);
-            // Update the current cache with data fetched from the next cache level
             this->updateCache(addr, NextCacheLevel, true, false);
-            return true; // Data fetched successfully
+            return true;
          }
          else
          {
-
-            // No data found in next level, fetching from memory
-            // MainMemTraffic++;
-            // printf("Fetching data from main memory for address %x\n", addr);
-            this->updateCache(addr, NextCacheLevel, true, false); // Update cache with data from memory
-            return false;                                         // Cache miss, data fetched from memory
+            this->updateCache(addr, NextCacheLevel, true, false);
+            return false;
          }
       }
       else
       {
-
-         // If no next level cache, assume fetching directly from memory
          MainMemTraffic++;
-         // printf("Fetching data from main memory for address %x\n", addr);
-         this->updateCache(addr, NextCacheLevel, true, false); // Update cache with data from memory
-         return false;                                         // Cache miss, data fetched from memory
+         this->updateCache(addr, NextCacheLevel, true, false);
+         return false;
       }
    }
 }
@@ -228,26 +177,20 @@ void Cache::updateCache(uint32_t addr, Cache *NextCacheLevel, bool FromRead, boo
 {
    uint32_t tag, index, blockOffset;
    ExtractAddressFields(addr, BLOCKSIZE, NumberOfIndexBits, blockOffset, index, tag);
-
-   // Step 1: Search for the tag in the current cache set
+   // Search for the tag in the current cache set
    for (uint32_t assocIndex = 0; assocIndex < ASSOC; ++assocIndex)
    {
       if (cache[index][assocIndex].isValid() && cache[index][assocIndex].getTag() == tag)
       {
-         // Cache hit, no need to replace the block
          ItemsInCache &lineToUpdate = cache[index][assocIndex];
-
-         // Ensure dirty bit is only modified during a write operation
          if (FromRead)
          {
-            lineToUpdate.setDirty(false); // Reads shouldn't mark the block dirty
+            lineToUpdate.setDirty(false); // Reads shouldn't make the dirty bit 1
          }
          else
          {
-            lineToUpdate.setDirty(true); // Writes should mark the block dirty
+            lineToUpdate.setDirty(true); // Writes should make the dirty bit 1
          }
-
-         // Update LRU counters
          updateLRUCounters(index, assocIndex);
          return;
       }
@@ -255,56 +198,36 @@ void Cache::updateCache(uint32_t addr, Cache *NextCacheLevel, bool FromRead, boo
 
    if (!FromRead)
    {
-      this->WriteMisses++; // Increment write miss counter
+      this->WriteMisses++;
    }
+   // Replace the least recently used (LRU) block
+   uint32_t lruIndex = getLRUIndex(index); // Getting the least recently used block index
+   ItemsInCache &TargetCacheSet = cache[index][lruIndex];
 
-   // this->WriteMisses++;
-
-   // Step 2: Cache miss, replace the least recently used (LRU) block
-   uint32_t lruIndex = getLRUIndex(index); // Get the least recently used block index
-   ItemsInCache &lineToReplace = cache[index][lruIndex];
-
-   // Step 3: Write-back if the evicted block is dirty
-   if (lineToReplace.isDirty())
+   // Write-back if the evicted block is dirty
+   if (TargetCacheSet.isDirty())
    {
-      this->WriteBacks++; // Increment the write-back count
-      uint32_t writeBackTag = lineToReplace.getTag();
-      // printf("Writing back dirty block at index %d with tag %d\n", index, writeBackTag);
-
+      this->WriteBacks++;
+      uint32_t writeBackTag = TargetCacheSet.getTag();
       if (NextCacheLevel != nullptr)
       {
          uint32_t NumberOfBlockoffset = log2(BLOCKSIZE);
          uint32_t writeBackAddr = (writeBackTag << (NumberOfIndexBits + NumberOfBlockoffset)) | (index << NumberOfBlockoffset) | blockOffset;
-         // printf("Writing back to next cache level for address %x\n", writeBackAddr);
-
-         // NextCacheLevel->writeFunction(addr, blockOffset, index, tag, NextCacheLevel->NextCacheLevel);
-         NextCacheLevel->updateCache(writeBackAddr, NextCacheLevel->NextCacheLevel, false, true); // Write-back to the next cache level
+         NextCacheLevel->updateCache(writeBackAddr, NextCacheLevel->NextCacheLevel, false, true);
          NextCacheLevel->Writes++;
       }
       else
       {
-
          MainMemTraffic++;
-
-         // printf("Writing back dirty block to main memory for address %x\n", addr);
       }
 
-      lineToReplace.setDirty(false); // After writing back, reset the dirty bit
+      TargetCacheSet.setDirty(false);
    }
-
-   // Step 4: Fetch data from the next level or memory if the block is not present
    if (NextCacheLevel != nullptr)
    {
-
       uint32_t nextBlockOffset, nextIndex, nextTag;
       if (NextCacheLevel->ReadFunction(addr, nextBlockOffset, nextIndex, nextTag, NextCacheLevel->NextCacheLevel, true))
       {
-         // printf("Data fetched from next level cache for address %x\n", addr);
-      }
-      else
-      {
-
-         // printf("Data fetched from main memory for address %x\n", addr);
       }
    }
    else
@@ -313,38 +236,30 @@ void Cache::updateCache(uint32_t addr, Cache *NextCacheLevel, bool FromRead, boo
       {
          MainMemTraffic++;
       }
-
-      // printf("Fetching data from main memory for address %x\n", addr);
    }
 
-   // Step 5: Replace the least recently used block with the new data
-   lineToReplace.setTag(tag);     // Set the tag for the new block
-   lineToReplace.setIndex(index); // Set the index
-   lineToReplace.setValid(true);  // Mark the block as valid
+   // Replace the least recently used block with the new data
+   TargetCacheSet.setTag(tag);
+   TargetCacheSet.setIndex(index);
+   TargetCacheSet.setValid(true);
 
-   // Set dirty bit based on the operation (FromRead will be false during writes)
    if (FromRead)
    {
-      lineToReplace.setDirty(false); // Read operation, no dirty bit
+      TargetCacheSet.setDirty(false);
    }
    else
    {
-      lineToReplace.setDirty(true); // Write operation, set the dirty bit
+      TargetCacheSet.setDirty(true);
    }
-
-   // Update LRU counters for the newly replaced block
    updateLRUCounters(index, lruIndex);
 }
 
 void Cache::updateLRUCounters(uint32_t setIndex, uint32_t assocIndex)
 {
-   // Increment counters for all lines except the accessed one
    for (uint32_t i = 0; i < ASSOC; ++i)
    {
-
       if (i != assocIndex)
       {
-
          uint32_t currentCounter = cache[setIndex][i].getCounter();
          if (currentCounter < cache[setIndex][assocIndex].getCounter())
          {
@@ -352,7 +267,6 @@ void Cache::updateLRUCounters(uint32_t setIndex, uint32_t assocIndex)
          }
       }
    }
-
    cache[setIndex][assocIndex].setCounter(0);
 }
 
@@ -360,83 +274,39 @@ uint32_t Cache::getLRUIndex(uint32_t index)
 {
    uint32_t maxLRUCounter = 0;
    uint32_t lruIndex = 0;
-
-   // Iterate through all associativity ways
    for (uint32_t i = 0; i < ASSOC; ++i)
    {
-      // Get the LRU counter for the current cache line
       uint32_t currentLRUCounter = cache[index][i].getCounter();
-
-      // Find the cache line with the highest LRU counter (least recently used)
       if (currentLRUCounter > maxLRUCounter)
       {
          maxLRUCounter = currentLRUCounter;
          lruIndex = i;
       }
-
-      // If there's an invalid cache line, we can replace it immediately
       if (!cache[index][i].isValid())
       {
-         return i; // Return the first invalid cache line
+         return i;
       }
    }
-
-   // If all cache lines are valid, return the LRU cache line index
    return lruIndex;
 }
 
 bool Cache::writeFunction(uint32_t addr, uint32_t &blockOffset, uint32_t &index, uint32_t &tag, Cache *NextCacheLevel)
 {
-   // Extract address fields for the current cache level
    ExtractAddressFields(addr, BLOCKSIZE, NumberOfIndexBits, blockOffset, index, tag);
-   this->Writes++; // Increment the write operation count
-
-   // Search in the current cache level
-   ItemsInCache cacheLine;
+   this->Writes++;
+   ItemsInCache CacheSet;
    uint32_t assocIndex = 0;
 
-   if (searchInCache(index, tag, cacheLine, assocIndex))
+   if (searchInCache(index, tag, CacheSet, assocIndex))
    {
-      // Cache hit
-      // printf("Cache hit at current cache level for write operation at address %x\n", addr);
-
-      // On a cache hit, update the block and set the dirty bit
       cache[index][assocIndex].setDirty(true); // Set the dirty bit on a write
       updateLRUCounters(index, assocIndex);    // Update LRU on cache hit
-
-      return true; // Cache hit
+      return true;
    }
    else
    {
-      // Cache miss: we first fetch the block (write-allocate)
-      // printf("Cache miss for write operation at address %x\n", addr);
-      // this->WriteMisses++; // Increment the write miss counter
 
-      // Fetch block from next cache level or memory
-      this->updateCache(addr, NextCacheLevel, false, true); // False indicates this is a write, set dirty bit
-      if (NextCacheLevel != nullptr)
-      {
-         uint32_t nextBlockOffset, nextIndex, nextTag;
-         if (NextCacheLevel->ReadFunction(addr, nextBlockOffset, nextIndex, nextTag, NextCacheLevel->NextCacheLevel, false))
-         {
-            // Data is fetched from next level
-            // printf("Block fetched from next cache level for write allocate at address %x\n", addr);
-         }
-         else
-         {
-
-            // If no next cache level, fetch from memory
-
-            // printf("Block fetched from main memory for write allocate at address %x\n", addr);
-         }
-      }
-      else
-      {
-         // MainMemTraffic++;
-      }
-
-      // Now update the current cache with the new block and set the dirty bit
-
+      this->updateCache(addr, NextCacheLevel, false, true);
       return false; // Cache miss
    }
 }
@@ -502,7 +372,6 @@ int main(int argc, char *argv[])
    Cache L1(params.BLOCKSIZE, params.L1_SIZE, params.L1_ASSOC);
    L1.displayConfig();
    L1.GetNoOfBlocksSetsIndexBits();
-   // printf("\n");
 
    // Conditionally create L2 cache if size and associativity are greater than 0
    if (params.L2_SIZE > 0 && params.L2_ASSOC > 0)
@@ -519,7 +388,6 @@ int main(int argc, char *argv[])
    {
       L1.NextCacheLevel = nullptr; // No L2 cache
    }
-
    uint32_t blockOffset, index, tag;
    // Read requests from the trace file and echo them back.
    while (fscanf(fp, "%c %x\n", &rw, &addr) == 2)
@@ -528,58 +396,48 @@ int main(int argc, char *argv[])
       {
          // printf("r %x\n", addr);
       }
-
       else if (rw == 'w')
       {
          // printf("w %x\n", addr);
       }
-
       else
       {
-         // printf("Error: Unknown request type %c.\n", rw);
+         printf("Error: Unknown request type %c.\n", rw);
          exit(EXIT_FAILURE);
       }
-
-      // Extract address fields for L1 (index, block offset, tag)
-      // L1.ExtractAddressFields(addr, L1.BLOCKSIZE, L1.NumberOfIndexBits, blockOffset, index, tag);
-
-      // Simulate a cache operation
       if (rw == 'r')
       {
          // printf("testing\n\n");
          L1.ReadFunction(addr, blockOffset, index, tag, L1.NextCacheLevel, false);
+         L1.Reads++;
       }
       else
       {
          L1.writeFunction(addr, blockOffset, index, tag, L1.NextCacheLevel);
       }
-
-      // printf("\n");
    }
 
-   // Display L1 cache statistics
    L1.displayCache(); // Display L1 cache after update
    printf("Number of reads %d\n", L1.Reads);
    printf("Number of readmisses %d\n", L1.ReadMisses);
    printf("Number of writes %d\n", L1.Writes);
    printf("Number of writemisses %d\n", L1.WriteMisses);
    printf("Number of Writebacks %d\n", L1.WriteBacks);
+   printf("L1 MissRate %.4f\n", (float)(L1.ReadMisses + L1.WriteMisses) / (L1.Reads + L1.Writes));
 
-   // If L2 cache was created, display its statistics
    if (L2)
    {
-      L2->displayCache(); // Display L2 cache after update
+      L2->displayCache();
       printf("Number of 2 reads %d\n", L2->Reads);
       printf("Number of 2 readmisses %d\n", L2->ReadMisses);
       printf("Number of 2 writes %d\n", L2->Writes);
       printf("Number of 2 writemisses %d\n", L2->WriteMisses);
       printf("Number of Writebacks %d\n", L2->WriteBacks);
+      printf("L2 MissRate %.4f\n", (float)(L2->ReadMisses) / (L2->Reads));
+
       delete L2; // Clean up dynamically allocated L2 cache
    }
-
    printf("Main Memory Traffic is %d\n", MainMemTraffic);
-   printf("Count is is %d\n", Count);
-
    fclose(fp); // Close the trace file
    return 0;
 }
