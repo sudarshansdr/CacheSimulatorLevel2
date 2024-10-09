@@ -46,7 +46,159 @@ std::string ItemsInCache::getFormattedItem() const
    return std::string(buffer);
 }
 
-Cache::Cache(uint32_t blocksize, uint32_t size, uint32_t assoc)
+// Constructor to initialize buffers with given sizes
+StreamBuffer::StreamBuffer(int M, int N) : M(M), N(N)
+{
+   buffers.resize(N);
+   for (int i = 0; i < N; ++i)
+   {
+      // printf("----------i-----------------%d\n", i);
+      buffers[i].valid = false; // Initially, all buffers are invalid
+      buffers[i].counter = i;   // Set counter to the index (0, 1, 2, ..., N-1)
+   }
+}
+
+// Method to display the state of the buffers
+void StreamBuffer::displayBuffers() const
+{
+   // Create a vector of indices to represent each buffer
+   std::vector<int> bufferIndices(N);
+   for (int i = 0; i < N; ++i)
+   {
+      bufferIndices[i] = i;
+   }
+
+   // Sort the buffer indices based on the counter value
+   std::sort(bufferIndices.begin(), bufferIndices.end(), [this](int a, int b)
+             { return buffers[a].counter < buffers[b].counter; });
+
+   // Iterate over sorted buffer indices and print in the desired format
+   for (int idx : bufferIndices)
+   {
+
+      // Create a temporary queue to print the elements without modifying the original queue
+      std::queue<int> tempQueue = buffers[idx].dataQueue;
+      while (!tempQueue.empty())
+      {
+         // Print each element in hexadecimal format
+         printf(" %x ", tempQueue.front());
+         tempQueue.pop();
+      }
+      printf("\n"); // New line after displaying each buffer's contents
+   }
+}
+
+void StreamBuffer::ExtractAddressFieldsSM(uint32_t addr, uint32_t BlockSize, uint32_t &TagAndIndexBits)
+{
+   int BlockOffsetBits = log2(BlockSize);
+   TagAndIndexBits = (addr >> BlockOffsetBits);
+   // printf("Tagandindex2 %d\n", BlockSize);
+}
+
+void StreamBuffer::AddElements(uint32_t addr, uint32_t BlockSize, uint32_t &TagAndIndexBits, uint32_t bufferIndex, uint32_t elementIndex)
+{
+
+   if (bufferIndex != -1)
+   {
+
+      for (int j = 1; j <= elementIndex + 1; ++j)
+      {
+
+         buffers[bufferIndex].dataQueue.push(addr + j + (M - elementIndex) - 1);
+         if (buffers[bufferIndex].dataQueue.size() >= M)
+         {
+            buffers[bufferIndex].dataQueue.pop();
+         }
+         MainMemTraffic++;
+
+         Count++;
+         // Buffercount++;
+      }
+      UpdateCounters(bufferIndex);
+   }
+   else
+   {
+      int lruIndex = 0;
+      for (int i = 0; i < N; ++i)
+      {
+         if (buffers[i].counter > buffers[lruIndex].counter)
+         {
+            lruIndex = i;
+         }
+      }
+      // printf("this is the LRU index %d\n\n", lruIndex);
+
+      while (!buffers[lruIndex].dataQueue.empty())
+      {
+         buffers[lruIndex].dataQueue.pop();
+      }
+
+      for (int j = 1; j <= M; ++j)
+      {
+         buffers[lruIndex].dataQueue.push(addr + j);
+         MainMemTraffic++;
+         Count++;
+         // Buffercount++;
+      }
+
+      buffers[lruIndex].valid = true;
+      // buffers[lruIndex].counter = 0;
+      UpdateCounters(lruIndex);
+   }
+}
+
+std::pair<int, int> StreamBuffer::SearchAddress(int addr)
+{
+   // Create a vector of buffer indices and sort by the counter values
+   std::vector<int> bufferIndices(N);
+   for (int i = 0; i < N; ++i)
+   {
+      bufferIndices[i] = i; // Initialize with buffer indices
+   }
+
+   // Sort buffer indices based on the corresponding buffer's counter value
+   std::sort(bufferIndices.begin(), bufferIndices.end(), [this](int a, int b)
+             {
+                return buffers[a].counter < buffers[b].counter; // Sort by ascending counter value
+             });
+
+   // Search for the address in the buffers based on sorted counter order
+   for (int Sortedi : bufferIndices)
+   {
+      std::queue<int> tempQueue = buffers[Sortedi].dataQueue;
+      int elementIndex = 0; // Track the index of the element in the queue
+
+      // Check each element in the queue
+      while (!tempQueue.empty())
+      {
+         if (tempQueue.front() == addr)
+         {
+            UpdateCounters(Sortedi);                      // Update counters for LRU management
+            return std::make_pair(Sortedi, elementIndex); // Return buffer and element index
+         }
+         tempQueue.pop();
+         elementIndex++; // Increment the index for each element in the queue
+      }
+   }
+
+   return std::make_pair(-1, -1); // Address not found in any buffer
+}
+
+void StreamBuffer::UpdateCounters(int currentIndex)
+{
+
+   for (int i = 0; i < N; ++i)
+   {
+      if (buffers[i].counter < buffers[currentIndex].counter)
+      {
+         // printf("\nbuffer ================%d\n", buffers[i].counter);
+         buffers[i].counter++; // Increment the counter
+      }
+   }
+   buffers[currentIndex].counter = 0;
+}
+
+Cache::Cache(uint32_t blocksize, uint32_t size, uint32_t assoc, const cache_params_t &params)
     : BLOCKSIZE(blocksize), SIZE(size), ASSOC(assoc), NextCacheLevel(nullptr)
 {
    GetNoOfBlocksSetsIndexBits();
@@ -58,6 +210,8 @@ Cache::Cache(uint32_t blocksize, uint32_t size, uint32_t assoc)
          cache[setIndex][assocIndex] = ItemsInCache(0, 0, false, false, assocIndex);
       }
    }
+   streamBuffer = new StreamBuffer(params.PREF_M, params.PREF_N);
+   // printf("params m value is - %d", params.PREF_M);
 }
 
 // This method calculates the number of blocks, sets, and index bits
@@ -150,7 +304,51 @@ bool Cache::searchInCache(uint32_t index, uint32_t tag, ItemsInCache &CacheSet, 
    return false;
 }
 
-bool Cache::ReadFunction(uint32_t addr, uint32_t &blockOffset, uint32_t &index, uint32_t &tag, Cache *NextCacheLevel, bool FromUpdate)
+bool Cache::Prefetcher(uint32_t addr, Cache *NextCacheLevel, bool CacheHit, bool FromRead, bool FromWrite)
+{
+
+   if (NextCacheLevel == nullptr)
+   {
+      uint32_t TagAndIndexbits;
+      streamBuffer->ExtractAddressFieldsSM(addr, BLOCKSIZE, TagAndIndexbits);
+
+      std::pair<int, int> result = streamBuffer->SearchAddress(TagAndIndexbits);
+
+      if (result.first != -1)
+      {
+         // Address found in a stream buffer, update cache with it
+         FromPrefetchUpdate = true;
+         if (CacheHit == false)
+         {
+            this->updateCache(addr, NextCacheLevel, FromRead, FromWrite, true, true);
+         }
+
+         streamBuffer->AddElements(TagAndIndexbits, BLOCKSIZE, TagAndIndexbits, result.first, result.second);
+         // streamBuffer->displayBuffers();
+         return true;
+      }
+      else
+      {
+         if (CacheHit == false)
+         {
+            streamBuffer->AddElements(TagAndIndexbits, BLOCKSIZE, TagAndIndexbits, result.first, result.second);
+            // streamBuffer->displayBuffers();
+            if (FromRead)
+            {
+               Buffercount++;
+               this->ReadMisses++;
+            }
+            if (FromWrite)
+            {
+               this->WriteMisses++;
+            }
+         }
+      }
+   }
+   return false;
+}
+
+bool Cache::ReadFunction(uint32_t addr, uint32_t &blockOffset, uint32_t &index, uint32_t &tag, Cache *NextCacheLevel, bool FromUpdate, bool IsPrefetch)
 {
    ExtractAddressFields(addr, BLOCKSIZE, NumberOfIndexBits, blockOffset, index, tag);
    ItemsInCache CacheSet;
@@ -164,11 +362,31 @@ bool Cache::ReadFunction(uint32_t addr, uint32_t &blockOffset, uint32_t &index, 
    if (searchInCache(index, tag, CacheSet, assocIndex))
    {
       updateLRUCounters(index, assocIndex);
+
+      if (IsPrefetch)
+      {
+
+         if (NextCacheLevel == nullptr)
+         {
+
+            this->Prefetcher(addr, NextCacheLevel, true, true, false);
+         }
+      }
+
       return true;
    }
    else
    {
-      this->ReadMisses++;
+
+      if (!IsPrefetch)
+      {
+         this->ReadMisses++;
+      }
+      if (IsPrefetch && (NextCacheLevel != nullptr))
+      {
+         this->ReadMisses++;
+      }
+
       uint32_t lruIndex = getLRUIndex(index);
       ItemsInCache &TargetCacheSet = cache[index][lruIndex];
 
@@ -179,7 +397,9 @@ bool Cache::ReadFunction(uint32_t addr, uint32_t &blockOffset, uint32_t &index, 
          {
             uint32_t NumberOfBlockOffset = log2(BLOCKSIZE);
             uint32_t writeBackAddr = (writeBackTag << (NumberOfIndexBits + NumberOfBlockOffset)) | (index << NumberOfBlockOffset) | blockOffset;
-            NextCacheLevel->updateCache(writeBackAddr, NextCacheLevel->NextCacheLevel, false, false);
+            // this->WriteBacks++;
+
+            NextCacheLevel->updateCache(writeBackAddr, NextCacheLevel->NextCacheLevel, false, false, IsPrefetch, false);
          }
          else
          {
@@ -188,29 +408,40 @@ bool Cache::ReadFunction(uint32_t addr, uint32_t &blockOffset, uint32_t &index, 
       if (NextCacheLevel != nullptr)
       {
          uint32_t nextBlockOffset, nextIndex, nextTag;
-         bool foundInNextLevel = NextCacheLevel->ReadFunction(addr, nextBlockOffset, nextIndex, nextTag, NextCacheLevel->NextCacheLevel, FromUpdate);
+         NextCacheLevel->ReadFunction(addr, nextBlockOffset, nextIndex, nextTag, NextCacheLevel->NextCacheLevel, FromUpdate, IsPrefetch);
 
-         if (foundInNextLevel)
-         {
-            this->updateCache(addr, NextCacheLevel, true, false);
-            return true;
-         }
-         else
-         {
-            this->updateCache(addr, NextCacheLevel, true, false);
-            return false;
-         }
+         // this->WriteBacks++;
+         this->updateCache(addr, NextCacheLevel, true, false, IsPrefetch, false);
       }
       else
       {
-         MainMemTraffic++;
-         this->updateCache(addr, NextCacheLevel, true, false);
+         if (IsPrefetch)
+         {
+            if (this->Prefetcher(addr, NextCacheLevel, false, IsPrefetch, false))
+            {
+               return false;
+            }
+            else
+            {
+               MainMemTraffic++;
+               this->updateCache(addr, NextCacheLevel, true, false, IsPrefetch, false);
+               return false;
+            }
+         }
+         else
+         {
+            MainMemTraffic++;
+            this->updateCache(addr, NextCacheLevel, true, false, IsPrefetch, false);
+            return false;
+         }
+
          return false;
       }
+      return false;
    }
 }
 
-void Cache::updateCache(uint32_t addr, Cache *NextCacheLevel, bool FromRead, bool FromWrite)
+void Cache::updateCache(uint32_t addr, Cache *NextCacheLevel, bool FromRead, bool FromWrite, bool IsPrefetch, bool FromPrefetch)
 {
    uint32_t tag, index, blockOffset;
    ExtractAddressFields(addr, BLOCKSIZE, NumberOfIndexBits, blockOffset, index, tag);
@@ -220,6 +451,7 @@ void Cache::updateCache(uint32_t addr, Cache *NextCacheLevel, bool FromRead, boo
       if (cache[index][assocIndex].isValid() && cache[index][assocIndex].getTag() == tag)
       {
          ItemsInCache &lineToUpdate = cache[index][assocIndex];
+
          if (FromRead)
          {
             lineToUpdate.setDirty(false); // Reads shouldn't make the dirty bit 1
@@ -228,33 +460,55 @@ void Cache::updateCache(uint32_t addr, Cache *NextCacheLevel, bool FromRead, boo
          {
             lineToUpdate.setDirty(true); // Writes should make the dirty bit 1
          }
+
          updateLRUCounters(index, assocIndex);
          return;
       }
    }
-
-   if (!FromRead)
+   if (!IsPrefetch)
    {
-      this->WriteMisses++;
+      if (!FromRead)
+      {
+         this->WriteMisses++;
+      }
    }
+
+   if ((NextCacheLevel != nullptr) && IsPrefetch)
+   {
+      if (!FromRead)
+      {
+         this->WriteMisses++;
+      }
+   }
+
+   if (!IsPrefetch)
+   {
+      if (!FromWrite)
+      {
+      }
+   }
+
    // Replace the least recently used (LRU) block
    uint32_t lruIndex = getLRUIndex(index); // Getting the least recently used block index
    ItemsInCache &TargetCacheSet = cache[index][lruIndex];
 
-   // Write-back if the evicted block is dirty
    if (TargetCacheSet.isDirty())
    {
+
       this->WriteBacks++;
+
       uint32_t writeBackTag = TargetCacheSet.getTag();
       if (NextCacheLevel != nullptr)
       {
          uint32_t NumberOfBlockoffset = log2(BLOCKSIZE);
          uint32_t writeBackAddr = (writeBackTag << (NumberOfIndexBits + NumberOfBlockoffset)) | (index << NumberOfBlockoffset) | blockOffset;
-         NextCacheLevel->updateCache(writeBackAddr, NextCacheLevel->NextCacheLevel, false, true);
+
+         NextCacheLevel->updateCache(writeBackAddr, NextCacheLevel->NextCacheLevel, false, true, IsPrefetch, FromPrefetch);
          NextCacheLevel->Writes++;
       }
       else
       {
+
          MainMemTraffic++;
       }
 
@@ -263,15 +517,15 @@ void Cache::updateCache(uint32_t addr, Cache *NextCacheLevel, bool FromRead, boo
    if (NextCacheLevel != nullptr)
    {
       uint32_t nextBlockOffset, nextIndex, nextTag;
-      if (NextCacheLevel->ReadFunction(addr, nextBlockOffset, nextIndex, nextTag, NextCacheLevel->NextCacheLevel, true))
+      if (NextCacheLevel->ReadFunction(addr, nextBlockOffset, nextIndex, nextTag, NextCacheLevel->NextCacheLevel, true, IsPrefetch))
       {
       }
    }
    else
    {
-      if (!FromRead)
+      if (!FromRead && !FromPrefetch)
       {
-         MainMemTraffic++;
+         MainMemTraffic++; // this is error
       }
    }
 
@@ -327,7 +581,7 @@ uint32_t Cache::getLRUIndex(uint32_t index)
    return lruIndex;
 }
 
-bool Cache::writeFunction(uint32_t addr, uint32_t &blockOffset, uint32_t &index, uint32_t &tag, Cache *NextCacheLevel)
+bool Cache::writeFunction(uint32_t addr, uint32_t &blockOffset, uint32_t &index, uint32_t &tag, Cache *NextCacheLevel, bool IsPrefetch)
 {
    ExtractAddressFields(addr, BLOCKSIZE, NumberOfIndexBits, blockOffset, index, tag);
    this->Writes++;
@@ -337,13 +591,43 @@ bool Cache::writeFunction(uint32_t addr, uint32_t &blockOffset, uint32_t &index,
    if (searchInCache(index, tag, CacheSet, assocIndex))
    {
       cache[index][assocIndex].setDirty(true); // Set the dirty bit on a write
-      updateLRUCounters(index, assocIndex);    // Update LRU on cache hit
+      updateLRUCounters(index, assocIndex);
+      if (IsPrefetch)
+      {
+
+         if (NextCacheLevel == nullptr)
+         {
+            this->Prefetcher(addr, NextCacheLevel, true, false, true); // Update LRU on cache hit
+         }
+      }
+
       return true;
    }
    else
    {
 
-      this->updateCache(addr, NextCacheLevel, false, true);
+      if (IsPrefetch)
+      {
+         if (NextCacheLevel == nullptr)
+         {
+            if (this->Prefetcher(addr, NextCacheLevel, false, false, true))
+            {
+            }
+            else
+            {
+               this->updateCache(addr, NextCacheLevel, false, true, IsPrefetch, false);
+            }
+         }
+         else
+         {
+            this->updateCache(addr, NextCacheLevel, false, true, IsPrefetch, false);
+         }
+      }
+      else
+      {
+         this->updateCache(addr, NextCacheLevel, false, true, IsPrefetch, false);
+      }
+
       return false; // Cache miss
    }
 }
@@ -406,14 +690,14 @@ int main(int argc, char *argv[])
    printf("\n");
 
    // Create L1 cache
-   Cache L1(params.BLOCKSIZE, params.L1_SIZE, params.L1_ASSOC);
+   Cache L1(params.BLOCKSIZE, params.L1_SIZE, params.L1_ASSOC, params);
    // L1.displayConfig();
    L1.GetNoOfBlocksSetsIndexBits();
 
    // Conditionally create L2 cache if size and associativity are greater than 0
    if (params.L2_SIZE > 0 && params.L2_ASSOC > 0)
    {
-      L2 = new Cache(params.BLOCKSIZE, params.L2_SIZE, params.L2_ASSOC); // Dynamically allocate L2 cache
+      L2 = new Cache(params.BLOCKSIZE, params.L2_SIZE, params.L2_ASSOC, params); // Dynamically allocate L2 cache
       // L2->displayConfig();
       L2->GetNoOfBlocksSetsIndexBits();
 
@@ -425,6 +709,15 @@ int main(int argc, char *argv[])
    {
       L1.NextCacheLevel = nullptr; // No L2 cache
    }
+
+   // StreamBuffer streamBuffer(params.PREF_M, params.PREF_N);
+   uint32_t TagAndIndexbits;
+   bool IsPrefetch = true;
+   if (params.PREF_M == 0 && params.PREF_N == 0)
+   {
+      IsPrefetch = false;
+   }
+   // printf("is 1 prefetch value -- %d", IsPrefetch);
    uint32_t blockOffset, index, tag;
    // Read requests from the trace file and echo them back.
    while (fscanf(fp, "%c %x\n", &rw, &addr) == 2)
@@ -445,14 +738,15 @@ int main(int argc, char *argv[])
       if (rw == 'r')
       {
          // printf("testing\n\n");
-         L1.ReadFunction(addr, blockOffset, index, tag, L1.NextCacheLevel, false);
+         L1.ReadFunction(addr, blockOffset, index, tag, L1.NextCacheLevel, false, IsPrefetch);
          L1.Reads++;
       }
       else
       {
-         L1.writeFunction(addr, blockOffset, index, tag, L1.NextCacheLevel);
+         L1.writeFunction(addr, blockOffset, index, tag, L1.NextCacheLevel, IsPrefetch);
       }
    }
+
    printf("===== L1 contents =====\n");
    L1.displayCache(); // Display L1 cache after update
    printf("\n");
@@ -466,6 +760,22 @@ int main(int argc, char *argv[])
       delete L2; // Clean up dynamically allocated L2 cache
    }
 
+   if (IsPrefetch)
+   {
+      printf("===== Stream Buffer(s) contents =====\n");
+      // StreamBuffer *streamBuffer = new StreamBuffer();
+
+      if (L2)
+      {
+         L2->streamBuffer->displayBuffers();
+      }
+      else
+      {
+         L1.streamBuffer->displayBuffers();
+      }
+      printf("\n");
+   }
+
    printf("===== Measurements =====\n");
    printf("a. L1 reads:                   %d\n", L1.Reads);
    printf("b. L1 read misses:             %d\n", L1.ReadMisses);
@@ -473,7 +783,15 @@ int main(int argc, char *argv[])
    printf("d. L1 write misses:            %d\n", L1.WriteMisses);
    printf("e. L1 miss rate:               %.4f\n", (float)(L1.ReadMisses + L1.WriteMisses) / (L1.Reads + L1.Writes));
    printf("f. L1 writebacks:              %d\n", L1.WriteBacks);
-   printf("g. L1 prefetches:              0\n");
+   if (L2)
+   {
+      printf("g. L1 prefetches:              %d\n", Count);
+   }
+   else
+   {
+      printf("g. L1 prefetches:              %d\n", Count);
+   }
+
    if (L2)
    {
       printf("h. L2 reads (demand):          %d\n", L2->Reads);
@@ -484,7 +802,7 @@ int main(int argc, char *argv[])
       printf("m. L2 write misses:            %d\n", L2->WriteMisses);
       printf("n. L2 miss rate:               %.4f\n", (float)(L2->ReadMisses) / (L2->Reads));
       printf("o. L2 writebacks:              %d\n", L2->WriteBacks);
-      printf("p. L2 prefetches:              0\n");
+      printf("p. L2 prefetches:              %d\n", Count);
    }
    else
    {

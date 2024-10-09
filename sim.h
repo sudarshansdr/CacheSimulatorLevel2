@@ -9,6 +9,7 @@
 #include <string>
 #include <sstream>
 #include <vector>
+#include <queue>
 
 typedef struct
 {
@@ -23,7 +24,34 @@ typedef struct
 
 uint32_t MainMemTraffic = 0;
 uint32_t Count = 0;
+uint32_t Buffercount = 0;
+bool FromPrefetchUpdate = false;
 
+class StreamBuffer
+{
+private:
+   struct Buffer
+   {
+      std::queue<int> dataQueue; // Queue to hold buffer values
+      bool valid;                // Indicates if the queue is valid
+      int counter;               // Counter for the stream buffer
+   };
+
+   std::vector<Buffer> buffers; // Array of stream buffers
+   int M;                       // Number of elements in each buffer
+   int N;                       // Number of stream buffers
+
+public:
+   // Constructor to initialize buffers with given sizes
+   StreamBuffer(int M, int N);
+
+   // Method to display the state of the buffers
+   void displayBuffers() const;
+   void AddElements(uint32_t addr, uint32_t BlockSize, uint32_t &TagAndIndexBits, uint32_t bufferIndex, uint32_t elementIndex);
+   void ExtractAddressFieldsSM(uint32_t addr, uint32_t BlockSize, uint32_t &TagAndIndexBits);
+   void UpdateCounters(int currentIndex);
+   std::pair<int, int> SearchAddress(int addr);
+};
 // Put additional data structures here as per your requirement.
 // Cache Element class definition
 class ItemsInCache
@@ -75,13 +103,23 @@ public:
    uint32_t Writes = 0;
    uint32_t WriteMisses = 0;
    uint32_t WriteBacks = 0;
+   uint32_t Prefetches = 0;
    uint32_t counter;
+   uint32_t M;
+   uint32_t N;
 
    std::vector<std::vector<ItemsInCache>> cache; // 2D dynamic array for cache elements
-
 public:
+   // Other member variables...
+
+   StreamBuffer *streamBuffer; // Pointer to StreamBuffer instance
+
    // Constructor
    Cache(uint32_t blocksize, uint32_t size, uint32_t assoc);
+
+public:
+   //  Constructor
+   Cache(uint32_t blocksize, uint32_t size, uint32_t assoc, const cache_params_t &params);
 
    // Method to calculate blocks, sets, and index bits
    void GetNoOfBlocksSetsIndexBits();
@@ -98,13 +136,14 @@ public:
    void ExtractAddressFields(uint32_t addr, uint32_t BlockSize, uint32_t IndexBits, uint32_t &blockOffset, uint32_t &index, uint32_t &tag);
 
    bool searchInCache(uint32_t index, uint32_t tag, ItemsInCache &cacheLine, uint32_t &assocIndex);
-   bool ReadFunction(uint32_t addr, uint32_t &blockOffset, uint32_t &index, uint32_t &tag, Cache *NextCacheLevel, bool FromUpdate);
-   bool writeFunction(uint32_t addr, uint32_t &blockOffset, uint32_t &index, uint32_t &tag, Cache *NextCacheLevel);
-   void updateCache(uint32_t addr, Cache *NextCacheLevel, bool FromRead, bool);
+   bool ReadFunction(uint32_t addr, uint32_t &blockOffset, uint32_t &index, uint32_t &tag, Cache *NextCacheLevel, bool FromUpdate, bool IsPrefetch);
+   bool writeFunction(uint32_t addr, uint32_t &blockOffset, uint32_t &index, uint32_t &tag, Cache *NextCacheLevel, bool IsPrefetch);
+   void updateCache(uint32_t addr, Cache *NextCacheLevel, bool FromRead, bool FromWrite, bool IsPrefetch, bool FromPrefetch);
    void updateLRUCounters(uint32_t setIndex, uint32_t assocIndex);
    uint32_t getLRUIndex(uint32_t index);
    void writeCache(uint32_t index, uint32_t tag);
    void updateCacheNextLevel(uint32_t addr, Cache *NextCacheLevel);
+   bool Prefetcher(uint32_t addr, Cache *NextCacheLevel, bool CacheHit, bool FromRead, bool FromWrite);
 };
 
 #endif
