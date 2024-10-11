@@ -26,6 +26,7 @@ uint32_t MainMemTraffic = 0;
 uint32_t Count = 0;
 uint32_t Buffercount = 0;
 bool FromPrefetchUpdate = false;
+bool PrefetchUnit(uint32_t Blocksize, uint32_t l1size, uint32_t l1assoc, uint32_t l2size, uint32_t l2assoc, uint32_t n, uint32_t m);
 
 class StreamBuffer
 {
@@ -97,7 +98,7 @@ public:
    uint32_t NumberOfBlocks;
    uint32_t NumberOfSets;
    uint32_t NumberOfIndexBits;
-   Cache *NextCacheLevel;
+   Cache *NextMemoryLevel;
    uint32_t Reads = 0;
    uint32_t ReadMisses = 0;
    uint32_t Writes = 0;
@@ -136,14 +137,14 @@ public:
    void ExtractAddressFields(uint32_t addr, uint32_t BlockSize, uint32_t IndexBits, uint32_t &blockOffset, uint32_t &index, uint32_t &tag);
 
    bool searchInCache(uint32_t index, uint32_t tag, ItemsInCache &cacheLine, uint32_t &assocIndex);
-   bool ReadFunction(uint32_t addr, uint32_t &blockOffset, uint32_t &index, uint32_t &tag, Cache *NextCacheLevel, bool FromUpdate, bool IsPrefetch);
-   bool writeFunction(uint32_t addr, uint32_t &blockOffset, uint32_t &index, uint32_t &tag, Cache *NextCacheLevel, bool IsPrefetch);
-   void updateCache(uint32_t addr, Cache *NextCacheLevel, bool FromRead, bool FromWrite, bool IsPrefetch, bool FromPrefetch);
+   bool ReadFunction(uint32_t addr, uint32_t &blockOffset, uint32_t &index, uint32_t &tag, Cache *NextMemoryLevel, bool FromUpdate, bool IsPrefetch);
+   bool writeFunction(uint32_t addr, uint32_t &blockOffset, uint32_t &index, uint32_t &tag, Cache *NextMemoryLevel, bool IsPrefetch);
+   void updateCache(uint32_t addr, Cache *NextMemoryLevel, bool FromRead, bool FromWrite, bool IsPrefetch, bool FromPrefetch);
    void updateLRUCounters(uint32_t setIndex, uint32_t assocIndex);
    uint32_t getLRUIndex(uint32_t index);
    void writeCache(uint32_t index, uint32_t tag);
-   void updateCacheNextLevel(uint32_t addr, Cache *NextCacheLevel);
-   bool Prefetcher(uint32_t addr, Cache *NextCacheLevel, bool CacheHit, bool FromRead, bool FromWrite);
+   void updateCacheNextLevel(uint32_t addr, Cache *NextMemoryLevel);
+   bool Prefetcher(uint32_t addr, Cache *NextMemoryLevel, bool CacheHit, bool FromRead, bool FromWrite);
 };
 
 #endif
